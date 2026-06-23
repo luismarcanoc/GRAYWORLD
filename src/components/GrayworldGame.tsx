@@ -763,8 +763,8 @@ export function GrayworldGame() {
           <button className="pixel-button" onClick={() => openSettings("title")}><PixelIcon kind="gear" /> AJUSTES</button>
         </div>
         <div className="quick-controls">
-          <span><i className="mini-player yin" /> YIN <kbd>WASD</kbd></span>
           <span><i className="mini-player yang" /> YANG <kbd>FLECHAS</kbd></span>
+          <span><i className="mini-player yin" /> YIN <kbd>WASD</kbd></span>
         </div>
       </section>
       <p className="version">v0.1 · PRIMER DESCENSO</p>

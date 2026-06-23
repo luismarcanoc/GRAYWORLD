@@ -103,11 +103,11 @@ kbd { padding: 4px 6px; color: #e9e9e5; background: #25282a; border: 1px solid #
 .hero-sprite::after { content: ""; position: absolute; left: 20px; top: 60px; width: 48px; height: 54px; background: currentColor; box-shadow: -20px 4px 0 -12px currentColor, 20px 4px 0 -12px currentColor, -12px 55px 0 -6px currentColor, 12px 55px 0 -6px currentColor; }
 .hero-sprite i { position: absolute; z-index: 1; top: 24px; width: 9px; height: 11px; background: currentColor; }
 .hero-sprite b { position: absolute; z-index: 1; top: 78px; left: 39px; width: 12px; height: 12px; background: currentColor; }
-.hero-yin { left: calc(50% - 430px); color: #090a0b; }
-.hero-yin i { right: 20px; color: #e9e9e5; }
+.hero-yin { right: calc(50% - 430px); color: #090a0b; }
+.hero-yin i { left: 20px; color: #e9e9e5; }
 .hero-yin b { color: #e9e9e5; }
-.hero-yang { right: calc(50% - 430px); color: #e9e9e5; }
-.hero-yang i { left: 20px; color: #090a0b; }
+.hero-yang { left: calc(50% - 430px); color: #e9e9e5; }
+.hero-yang i { right: 20px; color: #090a0b; }
 .hero-yang b { color: #090a0b; }
 .hero-divider { position: absolute; left: 50%; top: 11%; transform: translateX(-50%); }
 
