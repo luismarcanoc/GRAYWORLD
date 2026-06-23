@@ -759,6 +759,11 @@ function GameCanvas({
         ...(level.targets ?? []).filter((target, index) => target.solid && targetsAlive[index]),
         ...solidTraps,
       ];
+      const previousPlayers = new Map(players.map((player) => [player.kind, {
+        x: player.x,
+        y: player.y,
+        groundId: player.groundId,
+      }]));
 
       for (const player of players) {
         if (player.exited || (level.duality && player.kind !== dualityPhase)) continue;
@@ -929,6 +934,42 @@ function GameCanvas({
             projectiles = [];
           }
         }
+      }
+
+      const yinPhasing = powers.yin === "phase" && pressed.current.has(settings.bindings.yin.power);
+      if (!yinPhasing) {
+        const resolveStack = (top: RuntimePlayer, bottom: RuntimePlayer) => {
+          if (top.exited || bottom.exited || (level.duality && (top.kind !== dualityPhase || bottom.kind !== dualityPhase))) return;
+          const previousTop = previousPlayers.get(top.kind)!;
+          const previousBottom = previousPlayers.get(bottom.kind)!;
+          const wasStanding = previousTop.groundId === `player-${bottom.kind}`;
+          const horizontalOverlap = top.x < bottom.x + bottom.w && top.x + top.w > bottom.x;
+          if (!horizontalOverlap) return;
+
+          if (wasStanding && top.vy >= -1) {
+            const carriedX = Math.max(0, Math.min(width - top.w, top.x + bottom.x - previousBottom.x));
+            const carried = { ...top, x: carriedX, y: bottom.y - top.h };
+            if (!baseColliders.some((collider) => intersects(carried, collider))) top.x = carriedX;
+            top.y = bottom.y - top.h;
+            top.vy = Math.min(0, bottom.vy);
+            top.grounded = true;
+            top.groundId = `player-${bottom.kind}`;
+            return;
+          }
+
+          const previousBottomEdge = previousTop.y + top.h;
+          const crossedTop = previousBottomEdge <= previousBottom.y + 4 && top.y + top.h >= bottom.y;
+          if (crossedTop && top.vy >= bottom.vy) {
+            top.y = bottom.y - top.h;
+            top.vy = Math.min(0, bottom.vy);
+            top.grounded = true;
+            top.groundId = `player-${bottom.kind}`;
+            top.jumpCount = 0;
+          }
+        };
+
+        resolveStack(players[0], players[1]);
+        resolveStack(players[1], players[0]);
       }
       justPressed.current.clear();
       if (players.every((player) => player.exited)) {
