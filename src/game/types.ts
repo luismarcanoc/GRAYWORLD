@@ -1,4 +1,5 @@
 export type PlayerKind = "yin" | "yang";
+export type PowerKind = "phase" | "light" | "doubleJump" | "push" | "shrink" | "shoot" | "sword" | "shield";
 
 export type Rect = { x: number; y: number; w: number; h: number };
 
@@ -21,6 +22,26 @@ export type SwitchPlate = Rect & {
 };
 
 export type Gate = Rect & { switchId: string; inverted?: boolean };
+
+export type PowerPet = Rect & {
+  for: PlayerKind;
+  power: PowerKind;
+};
+
+export type SecretWall = Rect & { id?: string };
+
+export type PushCrate = Rect & { id: string };
+
+export type PowerTarget = Rect & {
+  id: string;
+  requires: "shoot" | "sword";
+  solid?: boolean;
+};
+
+export type Sentry = Rect & {
+  direction: -1 | 1;
+  interval?: number;
+};
 
 export type Trap =
   | {
@@ -64,6 +85,13 @@ export type Level = {
   switches?: SwitchPlate[];
   gates?: Gate[];
   traps?: Trap[];
+  pets?: PowerPet[];
+  secretWalls?: SecretWall[];
+  crates?: PushCrate[];
+  targets?: PowerTarget[];
+  sentries?: Sentry[];
+  duality?: boolean;
+  powerHint?: string;
 };
 
 export type WorldTheme = {
@@ -79,7 +107,7 @@ export type WorldTheme = {
   blockTop: string;
 };
 
-export type Bindings = Record<PlayerKind, Record<"left" | "right" | "jump" | "down", string>>;
+export type Bindings = Record<PlayerKind, Record<"left" | "right" | "jump" | "down" | "power", string>>;
 
 export type GameSettings = {
   master: number;

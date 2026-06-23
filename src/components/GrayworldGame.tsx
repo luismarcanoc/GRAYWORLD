@@ -2,14 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getLevel, getWorldLevels, LEVELS, WORLD_THEMES } from "@/game/levels";
-import type { Bindings, GameSettings, Level, PlayerKind, Rect, Trap } from "@/game/types";
+import type { Bindings, GameSettings, Level, PlayerKind, PowerKind, Rect, Trap } from "@/game/types";
 
 type Screen = "title" | "map" | "settings" | "game";
-type Action = "left" | "right" | "jump" | "down";
+type Action = "left" | "right" | "jump" | "down" | "power";
 
 const DEFAULT_BINDINGS: Bindings = {
-  yin: { left: "KeyA", right: "KeyD", jump: "KeyW", down: "KeyS" },
-  yang: { left: "ArrowLeft", right: "ArrowRight", jump: "ArrowUp", down: "ArrowDown" },
+  yin: { left: "KeyA", right: "KeyD", jump: "KeyW", down: "KeyS", power: "Space" },
+  yang: { left: "ArrowLeft", right: "ArrowRight", jump: "ArrowUp", down: "ArrowDown", power: "KeyL" },
 };
 
 const DEFAULT_SETTINGS: GameSettings = {
@@ -27,8 +27,19 @@ const KEY_NAMES: Record<string, string> = {
   Numpad4: "NUM 4", Numpad6: "NUM 6", Numpad8: "NUM 8", Numpad5: "NUM 5",
 };
 
-const actionName: Record<Action, string> = { left: "IZQUIERDA", right: "DERECHA", jump: "SALTAR", down: "ABAJO" };
+const actionName: Record<Action, string> = { left: "IZQUIERDA", right: "DERECHA", jump: "SALTAR", down: "ABAJO", power: "PODER" };
 const playerName: Record<PlayerKind, string> = { yin: "YIN", yang: "YANG" };
+
+const powerName: Record<PowerKind, string> = {
+  phase: "ATRAVESAR",
+  light: "ILUMINAR",
+  doubleJump: "DOBLE SALTO",
+  push: "EMPUJAR",
+  shrink: "ENCOGERSE",
+  shoot: "DISPARAR",
+  sword: "ESPADA",
+  shield: "ESCUDO",
+};
 
 function keyLabel(code: string) {
   return KEY_NAMES[code] ?? code.replace("Key", "").replace("Digit", "");
@@ -125,10 +136,12 @@ function GameCanvas({
       coyote: number;
       facing: number;
       walk: number;
+      jumpCount: number;
+      attackTimer: number;
       groundId?: string;
       exited: boolean;
     };
-    type TrapState = { active: boolean; time: number; x?: number; y?: number; velocity?: number };
+    type TrapState = { active: boolean; time: number; x?: number; y?: number; velocity?: number; dx: number; dy: number };
 
     const makePlayer = (kind: PlayerKind): RuntimePlayer => ({
       x: level.spawn[kind].x,
@@ -142,6 +155,8 @@ function GameCanvas({
       coyote: 0,
       facing: kind === "yin" ? 1 : -1,
       walk: 0,
+      jumpCount: 0,
+      attackTimer: 0,
       exited: false,
     });
 
@@ -152,6 +167,8 @@ function GameCanvas({
       x: trap.type === "side-slam" ? trap.rect.x : undefined,
       y: trap.type === "crusher" ? trap.rect.y : undefined,
       velocity: 0,
+      dx: 0,
+      dy: 0,
     }));
     let platformFalls = new Map<string, { active: boolean; time: number; y: number; velocity: number }>();
     for (const platform of level.platforms) {
@@ -159,6 +176,14 @@ function GameCanvas({
     }
     let latched = new Set<string>();
     let currentSwitches = new Set<string>();
+    let petFreed = (level.pets ?? []).map(() => false);
+    let powers: Record<PlayerKind, PowerKind | null> = { yin: null, yang: null };
+    let crates = (level.crates ?? []).map((crate) => ({ ...crate }));
+    let targetsAlive = (level.targets ?? []).map(() => true);
+    let sentryTimers = (level.sentries ?? []).map((sentry, index) => (sentry.interval ?? 1.8) * (0.45 + index * 0.18));
+    let projectiles: { x: number; y: number; vx: number; owner: "player" | "enemy"; life: number }[] = [];
+    let dualityPhase: PlayerKind = "yin";
+    let powerHintTimer = level.powerHint ? 7 : 0;
     let deadTimer = 0;
     let completeTimer = 0;
     let completed = false;
@@ -178,6 +203,8 @@ function GameCanvas({
         x: trap.type === "side-slam" ? trap.rect.x : undefined,
         y: trap.type === "crusher" ? trap.rect.y : undefined,
         velocity: 0,
+        dx: 0,
+        dy: 0,
       }));
       platformFalls = new Map();
       for (const platform of level.platforms) {
@@ -185,6 +212,14 @@ function GameCanvas({
       }
       latched = new Set();
       currentSwitches = new Set();
+      petFreed = (level.pets ?? []).map(() => false);
+      powers = { yin: null, yang: null };
+      crates = (level.crates ?? []).map((crate) => ({ ...crate }));
+      targetsAlive = (level.targets ?? []).map(() => true);
+      sentryTimers = (level.sentries ?? []).map((sentry, index) => (sentry.interval ?? 1.8) * (0.45 + index * 0.18));
+      projectiles = [];
+      dualityPhase = "yin";
+      powerHintTimer = level.powerHint ? 7 : 0;
       deadTimer = 0;
       completeTimer = 0;
       completed = false;
@@ -262,6 +297,16 @@ function GameCanvas({
       const armA = moving ? Math.round(-cycle * 2) : 0;
       const armB = moving ? Math.round(cycle * 2) : 0;
 
+      if (player.h < 30) {
+        ctx.fillStyle = outline;
+        ctx.fillRect(x + 2, y + 1, 20, 17);
+        ctx.fillStyle = body;
+        ctx.fillRect(x + 4, y + 3, 16, 15);
+        ctx.fillStyle = opposite;
+        ctx.fillRect(player.facing > 0 ? x + 15 : x + 7, y + 7, 3, 3);
+        return;
+      }
+
       ctx.fillStyle = outline;
       ctx.fillRect(x + 2 + legA, y + 26, 8, 9);
       ctx.fillRect(x + 14 + legB, y + 26, 8, 9);
@@ -303,16 +348,23 @@ function GameCanvas({
       const sx = shake > 0 ? Math.round((Math.random() - 0.5) * shake) : 0;
       const sy = shake > 0 ? Math.round((Math.random() - 0.5) * shake) : 0;
       ctx.translate(sx, sy);
-      ctx.fillStyle = theme.bg;
+      const dualWhite = level.duality && dualityPhase === "yin";
+      const dualBlack = level.duality && dualityPhase === "yang";
+      const background = dualWhite ? "#efefeb" : dualBlack ? "#060708" : theme.bg;
+      const far = dualWhite ? "#d4d4d0" : dualBlack ? "#111315" : theme.far;
+      const near = dualWhite ? "#bcbdb9" : dualBlack ? "#1b1e20" : theme.near;
+      const block = dualWhite ? "#c5c6c2" : dualBlack ? "#292d30" : theme.block;
+      const blockTop = dualWhite ? "#8f9290" : dualBlack ? "#555b5f" : theme.blockTop;
+      ctx.fillStyle = background;
       ctx.fillRect(-20, -20, width + 40, height + 40);
 
-      ctx.fillStyle = theme.far;
+      ctx.fillStyle = far;
       for (let x = -30; x < width + 50; x += 96) {
         const tower = 90 + ((x / 96 + level.number * 3) % 4) * 26;
         ctx.fillRect(x, 480 - tower, 62, tower);
         ctx.fillRect(x + 16, 480 - tower - 18, 28, 18);
       }
-      ctx.fillStyle = theme.near;
+      ctx.fillStyle = near;
       for (let x = 0; x < width; x += 48) {
         const h = 25 + ((x / 48 + level.world + level.number) % 3) * 14;
         ctx.fillRect(x, 480 - h, 34, h);
@@ -341,7 +393,54 @@ function GameCanvas({
         }
       }
 
-      activePlatforms().forEach((platform, index) => drawBlock(platform, theme.block, theme.blockTop, index % 2 ? 8 : 0));
+      activePlatforms().forEach((platform, index) => drawBlock(platform, block, blockTop, index % 2 ? 8 : 0));
+
+      (level.secretWalls ?? []).forEach((wall) => {
+        const lightPlayer = players.find((player) => player.kind === "yang");
+        const lit = powers.yang === "light" && pressed.current.has(settings.bindings.yang.power) && lightPlayer &&
+          Math.hypot(lightPlayer.x + lightPlayer.w / 2 - (wall.x + wall.w / 2), lightPlayer.y + lightPlayer.h / 2 - (wall.y + wall.h / 2)) < 300;
+        if (lit) {
+          ctx.fillStyle = `${theme.accent}38`;
+          ctx.fillRect(wall.x - 8, wall.y - 8, wall.w + 16, wall.h + 16);
+          drawBlock(wall, theme.accentSoft, theme.accent);
+          ctx.fillStyle = "rgba(255,255,255,.7)";
+          ctx.fillRect(wall.x + 7, wall.y + 12, 4, wall.h - 24);
+        } else {
+          ctx.fillStyle = background;
+          ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
+          ctx.fillStyle = `${blockTop}20`;
+          ctx.fillRect(wall.x + wall.w - 2, wall.y, 2, wall.h);
+        }
+      });
+
+      crates.forEach((crate) => {
+        drawBlock(crate, "#706342", theme.accent);
+        ctx.strokeStyle = "#211d13";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(crate.x + 5, crate.y + 5);
+        ctx.lineTo(crate.x + crate.w - 5, crate.y + crate.h - 5);
+        ctx.moveTo(crate.x + crate.w - 5, crate.y + 5);
+        ctx.lineTo(crate.x + 5, crate.y + crate.h - 5);
+        ctx.stroke();
+      });
+
+      (level.targets ?? []).forEach((target, index) => {
+        if (!targetsAlive[index]) return;
+        if (target.solid) drawBlock(target, "#382f3a", theme.accentSoft);
+        ctx.fillStyle = target.requires === "shoot" ? "#f3a7bd" : "#a9c7ff";
+        ctx.fillRect(target.x, target.y, target.w, target.h);
+        ctx.fillStyle = "#111";
+        ctx.fillRect(target.x + 5, target.y + 5, Math.max(4, target.w - 10), Math.max(4, target.h - 10));
+      });
+
+      (level.sentries ?? []).forEach((sentry) => {
+        drawBlock(sentry, "#28303b", theme.accentSoft);
+        ctx.fillStyle = theme.accent;
+        ctx.fillRect(sentry.direction < 0 ? sentry.x - 8 : sentry.x + sentry.w, sentry.y + 10, 8, 10);
+        ctx.fillStyle = "#090a0b";
+        ctx.fillRect(sentry.x + 9, sentry.y + 8, 8, 8);
+      });
 
       (level.switches ?? []).forEach((plate) => {
         const on = currentSwitches.has(plate.id) || latched.has(plate.id);
@@ -382,7 +481,59 @@ function GameCanvas({
         }
       });
 
-      players.forEach(drawPlayer);
+      (level.pets ?? []).forEach((pet, index) => {
+        const owner = players.find((player) => player.kind === pet.for)!;
+        const px = petFreed[index] ? owner.x - 9 - index * 4 : pet.x;
+        const py = petFreed[index] ? owner.y - 13 + Math.sin(time * 5 + index) * 4 : pet.y;
+        const light = pet.for === "yang";
+        if (!petFreed[index]) {
+          ctx.strokeStyle = theme.accentSoft;
+          ctx.lineWidth = 3;
+          ctx.strokeRect(pet.x - 5, pet.y - 5, pet.w + 10, pet.h + 10);
+          ctx.fillStyle = "rgba(0,0,0,.35)";
+          for (let x = pet.x - 1; x < pet.x + pet.w + 2; x += 8) ctx.fillRect(x, pet.y - 5, 3, pet.h + 10);
+        }
+        ctx.fillStyle = light ? "#f2f2ee" : "#08090a";
+        ctx.fillRect(Math.round(px + 4), Math.round(py + 5), 18, 15);
+        ctx.fillRect(Math.round(px + 7), Math.round(py + 2), 12, 20);
+        ctx.fillStyle = light ? "#08090a" : "#f2f2ee";
+        ctx.fillRect(Math.round(px + (light ? 9 : 14)), Math.round(py + 8), 3, 3);
+      });
+
+      projectiles.forEach((projectile) => {
+        ctx.fillStyle = projectile.owner === "player" ? "#f6a6c0" : "#90b8ff";
+        ctx.fillRect(Math.round(projectile.x - 5), Math.round(projectile.y - 3), 10, 6);
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(Math.round(projectile.x), Math.round(projectile.y - 2), 4, 4);
+      });
+
+      players.forEach((player) => {
+        const inactive = level.duality && player.kind !== dualityPhase && !player.exited;
+        if (inactive) ctx.globalAlpha = 0.24;
+        drawPlayer(player);
+        ctx.globalAlpha = 1;
+
+        const held = pressed.current.has(settings.bindings[player.kind].power);
+        if (powers[player.kind] === "light" && held) {
+          const gradient = ctx.createRadialGradient(player.x + 12, player.y + 17, 12, player.x + 12, player.y + 17, 180);
+          gradient.addColorStop(0, "rgba(190,255,247,.22)");
+          gradient.addColorStop(1, "rgba(190,255,247,0)");
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.arc(player.x + 12, player.y + 17, 180, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        if (powers[player.kind] === "shield" && held) {
+          const shieldX = player.facing > 0 ? player.x + player.w + 3 : player.x - 11;
+          ctx.strokeStyle = "#d7e5ff";
+          ctx.lineWidth = 4;
+          ctx.strokeRect(shieldX, player.y - 4, 8, player.h + 8);
+        }
+        if (powers[player.kind] === "sword" && player.attackTimer > 0) {
+          ctx.fillStyle = "#e8efff";
+          ctx.fillRect(player.facing > 0 ? player.x + player.w : player.x - 24, player.y + 10, 24, 5);
+        }
+      });
       particles.forEach((particle) => {
         ctx.globalAlpha = Math.max(0, particle.life / 0.72);
         ctx.fillStyle = particle.color;
@@ -395,12 +546,34 @@ function GameCanvas({
       ctx.fillStyle = theme.accent;
       ctx.font = "bold 16px monospace";
       ctx.fillText(`${level.id}  ${level.name}`, 32, 44);
+      if (powerHintTimer > 0 && level.powerHint) {
+        const hintWidth = Math.min(660, ctx.measureText(level.powerHint).width + 46);
+        ctx.fillStyle = dualWhite ? "rgba(0,0,0,.82)" : "rgba(5,6,7,.82)";
+        ctx.fillRect(width / 2 - hintWidth / 2, 72, hintWidth, 42);
+        ctx.strokeStyle = theme.accent;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(width / 2 - hintWidth / 2, 72, hintWidth, 42);
+        ctx.fillStyle = "#f1f1ed";
+        ctx.font = "bold 12px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(level.powerHint, width / 2, 98);
+        ctx.textAlign = "start";
+      }
+      if (level.duality) {
+        ctx.fillStyle = dualWhite ? "#090a0b" : "#efefeb";
+        ctx.font = "bold 11px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(dualityPhase === "yin" ? "FASE BLANCA · TURNO DE YIN" : "FASE NEGRA · TURNO DE YANG", width / 2, 132);
+        ctx.textAlign = "start";
+      }
       ctx.restore();
     };
 
     const updateTrap = (trap: Trap, state: TrapState, index: number, dt: number) => {
+      state.dx = 0;
+      state.dy = 0;
       const trigger = "trigger" in trap ? trap.trigger : undefined;
-      if (trigger && !state.active && players.some((player) => !player.exited && intersects(player, trigger))) {
+      if (trigger && !state.active && players.some((player) => !player.exited && (!level.duality || player.kind === dualityPhase) && intersects(player, trigger))) {
         state.active = true;
         state.time = 0;
         playSfx("trap");
@@ -408,7 +581,7 @@ function GameCanvas({
       if (trap.type === "falling-floor") {
         const fall = platformFalls.get(trap.platformId);
         if (!fall) return;
-        if (!fall.active && players.some((player) => player.grounded && player.groundId === trap.platformId)) {
+        if (!fall.active && players.some((player) => (!level.duality || player.kind === dualityPhase) && player.grounded && player.groundId === trap.platformId)) {
           fall.active = true;
           fall.time = 0;
           playSfx("trap");
@@ -424,11 +597,35 @@ function GameCanvas({
       }
       if (!state.active) return;
       state.time += dt;
-      if (trap.type === "crusher") state.y = Math.min(trap.targetY, (state.y ?? trap.rect.y) + (trap.speed ?? 600) * dt);
+      if (trap.type === "crusher") {
+        const oldY = state.y ?? trap.rect.y;
+        let nextY = Math.min(trap.targetY, oldY + (trap.speed ?? 600) * dt);
+        for (const platform of activePlatforms()) {
+          const horizontal = trap.rect.x < platform.x + platform.w && trap.rect.x + trap.rect.w > platform.x;
+          if (horizontal && oldY + trap.rect.h <= platform.y && nextY + trap.rect.h >= platform.y) {
+            nextY = Math.min(nextY, platform.y - trap.rect.h);
+          }
+        }
+        state.y = nextY;
+        state.dy = nextY - oldY;
+      }
       if (trap.type === "side-slam") {
         const direction = Math.sign(trap.targetX - trap.rect.x);
-        const next = (state.x ?? trap.rect.x) + direction * (trap.speed ?? 700) * dt;
-        state.x = direction > 0 ? Math.min(trap.targetX, next) : Math.max(trap.targetX, next);
+        const oldX = state.x ?? trap.rect.x;
+        const rawNext = oldX + direction * (trap.speed ?? 700) * dt;
+        let nextX = direction > 0 ? Math.min(trap.targetX, rawNext) : Math.max(trap.targetX, rawNext);
+        for (const platform of activePlatforms()) {
+          const vertical = trap.rect.y < platform.y + platform.h && trap.rect.y + trap.rect.h > platform.y;
+          if (!vertical) continue;
+          if (direction > 0 && oldX + trap.rect.w <= platform.x && nextX + trap.rect.w >= platform.x) {
+            nextX = Math.min(nextX, platform.x - trap.rect.w);
+          }
+          if (direction < 0 && oldX >= platform.x + platform.w && nextX <= platform.x + platform.w) {
+            nextX = Math.max(nextX, platform.x + platform.w);
+          }
+        }
+        state.x = nextX;
+        state.dx = nextX - oldX;
       }
       void index;
     };
@@ -455,10 +652,84 @@ function GameCanvas({
         return;
       }
 
+      powerHintTimer = Math.max(0, powerHintTimer - dt);
+      players.forEach((player) => {
+        player.attackTimer = Math.max(0, player.attackTimer - dt);
+      });
+
+      (level.pets ?? []).forEach((pet, index) => {
+        if (petFreed[index]) return;
+        const owner = players.find((player) => player.kind === pet.for)!;
+        const activeTurn = !level.duality || dualityPhase === owner.kind;
+        const reach = { x: pet.x - 18, y: pet.y - 18, w: pet.w + 36, h: pet.h + 36 };
+        if (activeTurn && justPressed.current.has(settings.bindings[owner.kind].power) && intersects(owner, reach)) {
+          petFreed[index] = true;
+          powers[owner.kind] = pet.power;
+          powerHintTimer = 5;
+          playSfx("win");
+        }
+      });
+
+      (level.sentries ?? []).forEach((sentry, index) => {
+        sentryTimers[index] -= dt;
+        if (sentryTimers[index] <= 0) {
+          projectiles.push({
+            x: sentry.direction < 0 ? sentry.x - 8 : sentry.x + sentry.w + 8,
+            y: sentry.y + sentry.h / 2,
+            vx: sentry.direction * 245,
+            owner: "enemy",
+            life: 5,
+          });
+          sentryTimers[index] = sentry.interval ?? 1.8;
+          playSfx("trap");
+        }
+      });
+
+      projectiles.forEach((projectile) => {
+        projectile.x += projectile.vx * dt;
+        projectile.life -= dt;
+        const bulletRect = { x: projectile.x - 5, y: projectile.y - 3, w: 10, h: 6 };
+        if (projectile.owner === "player") {
+          (level.targets ?? []).forEach((target, index) => {
+            if (targetsAlive[index] && target.requires === "shoot" && intersects(bulletRect, target)) {
+              targetsAlive[index] = false;
+              latched.add(target.id);
+              projectile.life = 0;
+              playSfx("switch");
+            }
+          });
+        } else {
+          for (const player of players) {
+            if (player.exited || (level.duality && player.kind !== dualityPhase)) continue;
+            const shielding = powers[player.kind] === "shield" && pressed.current.has(settings.bindings[player.kind].power);
+            const shieldRect = {
+              x: player.facing > 0 ? player.x + player.w : player.x - 14,
+              y: player.y - 5,
+              w: 14,
+              h: player.h + 10,
+            };
+            const swordRect = {
+              x: player.facing > 0 ? player.x + player.w : player.x - 28,
+              y: player.y + 6,
+              w: 28,
+              h: 14,
+            };
+            if ((shielding && intersects(bulletRect, shieldRect)) || (player.attackTimer > 0 && intersects(bulletRect, swordRect))) {
+              projectile.life = 0;
+              playSfx("switch");
+            } else if (intersects(bulletRect, player)) {
+              projectile.life = 0;
+              kill(player);
+            }
+          }
+        }
+      });
+      projectiles = projectiles.filter((projectile) => projectile.life > 0 && projectile.x > -30 && projectile.x < width + 30);
+
       currentSwitches = new Set();
       (level.switches ?? []).forEach((plate) => {
         players.forEach((player) => {
-          if (player.exited) return;
+          if (player.exited || (level.duality && player.kind !== dualityPhase)) return;
           const allowed = !plate.for || plate.for === "any" || plate.for === player.kind;
           if (allowed && intersects(player, plate)) {
             currentSwitches.add(plate.id);
@@ -468,23 +739,106 @@ function GameCanvas({
             }
           }
         });
+        if (crates.some((crate) => intersects(crate, plate))) {
+          currentSwitches.add(plate.id);
+          if (plate.latch) latched.add(plate.id);
+        }
       });
 
       (level.traps ?? []).forEach((trap, index) => updateTrap(trap, trapStates[index], index, dt));
 
-      const colliders: (Rect & { id?: string })[] = [
+      const solidTraps: (Rect & { id?: string })[] = (level.traps ?? []).flatMap((trap, index) => {
+        const state = trapStates[index];
+        if (trap.type === "crusher") return [{ ...trap.rect, y: state.y ?? trap.rect.y, id: `trap-${index}` }];
+        if (trap.type === "side-slam") return [{ ...trap.rect, x: state.x ?? trap.rect.x, id: `trap-${index}` }];
+        return [];
+      });
+      const baseColliders: (Rect & { id?: string })[] = [
         ...activePlatforms(),
         ...(level.gates ?? []).filter((gate) => !gateOpen(gate.switchId)),
+        ...(level.targets ?? []).filter((target, index) => target.solid && targetsAlive[index]),
+        ...solidTraps,
       ];
 
       for (const player of players) {
-        if (player.exited) continue;
+        if (player.exited || (level.duality && player.kind !== dualityPhase)) continue;
+
+        (level.traps ?? []).forEach((trap, index) => {
+          const state = trapStates[index];
+          if (trap.type === "side-slam" && state.dx !== 0) {
+            const rect = { ...trap.rect, x: state.x ?? trap.rect.x };
+            if (intersects(player, rect)) {
+              player.x = state.dx > 0 ? rect.x + rect.w : rect.x - player.w;
+              player.vx = state.dx / Math.max(dt, 0.001);
+            }
+          }
+          if (trap.type === "crusher" && state.dy > 0) {
+            const rect = { ...trap.rect, y: state.y ?? trap.rect.y };
+            if (intersects(player, rect)) {
+              player.y = rect.y + rect.h;
+              player.vy = state.dy / Math.max(dt, 0.001);
+            }
+          }
+        });
+
         const binding = settings.bindings[player.kind];
         const left = pressed.current.has(binding.left);
         const right = pressed.current.has(binding.right);
         const down = pressed.current.has(binding.down);
         const jump = justPressed.current.has(binding.jump);
+        const powerHeld = pressed.current.has(binding.power);
+        const powerPressed = justPressed.current.has(binding.power);
+        const power = powers[player.kind];
         const direction = Number(right) - Number(left);
+        const secretColliders = (level.secretWalls ?? []).filter(() => !(player.kind === "yin" && power === "phase" && powerHeld));
+        const colliders: (Rect & { id?: string })[] = [...baseColliders, ...secretColliders, ...crates];
+
+        if (power === "shrink" && powerHeld && player.h === 34) {
+          player.y += 16;
+          player.h = 18;
+        } else if ((!powerHeld || power !== "shrink") && player.h === 18) {
+          const grown = { ...player, y: player.y - 16, h: 34 };
+          if (!colliders.some((collider) => intersects(grown, collider))) {
+            player.y -= 16;
+            player.h = 34;
+          }
+        }
+
+        if (power === "shoot" && powerPressed) {
+          projectiles.push({
+            x: player.facing > 0 ? player.x + player.w + 8 : player.x - 8,
+            y: player.y + player.h / 2,
+            vx: player.facing * 440,
+            owner: "player",
+            life: 2.5,
+          });
+          playSfx("switch");
+        }
+        if (power === "sword" && powerPressed) {
+          player.attackTimer = 0.2;
+          const swordRect = { x: player.facing > 0 ? player.x + player.w : player.x - 30, y: player.y + 4, w: 30, h: 24 };
+          (level.targets ?? []).forEach((target, index) => {
+            if (targetsAlive[index] && target.requires === "sword" && intersects(swordRect, target)) {
+              targetsAlive[index] = false;
+              latched.add(target.id);
+              playSfx("switch");
+            }
+          });
+        }
+
+        if (power === "push" && powerHeld && direction !== 0) {
+          const crate = crates.find((candidate) => {
+            const vertical = player.y < candidate.y + candidate.h && player.y + player.h > candidate.y;
+            const distance = direction > 0 ? candidate.x - (player.x + player.w) : player.x - (candidate.x + candidate.w);
+            return vertical && distance >= -2 && distance < 10;
+          });
+          if (crate) {
+            const oldX = crate.x;
+            crate.x += direction * 125 * dt;
+            const crateObstacles = [...baseColliders, ...(level.secretWalls ?? []), ...crates.filter((candidate) => candidate !== crate)];
+            if (crate.x < 0 || crate.x + crate.w > width || crateObstacles.some((obstacle) => intersects(crate, obstacle))) crate.x = oldX;
+          }
+        }
         const acceleration = player.grounded ? 2600 : 1500;
         const target = direction * 235;
         if (direction !== 0) {
@@ -494,11 +848,18 @@ function GameCanvas({
         } else {
           player.vx *= Math.pow(player.grounded ? 0.00008 : 0.045, dt);
         }
+        if (player.grounded) player.jumpCount = 0;
         player.coyote = player.grounded ? 0.1 : Math.max(0, player.coyote - dt);
         if (jump && player.coyote > 0) {
           player.vy = -610;
           player.grounded = false;
           player.coyote = 0;
+          player.jumpCount = 1;
+          playSfx("jump");
+        } else if (jump && power === "doubleJump" && player.jumpCount < 2) {
+          player.vy = -575;
+          player.grounded = false;
+          player.jumpCount = 2;
           playSfx("jump");
         }
         if (down && !player.grounded) player.vy += 850 * dt;
@@ -521,6 +882,7 @@ function GameCanvas({
             player.y = collider.y - player.h;
             player.grounded = true;
             player.groundId = collider.id;
+            player.jumpCount = 0;
           } else if (player.vy < 0) player.y = collider.y + collider.h;
           player.vy = 0;
         }
@@ -535,11 +897,8 @@ function GameCanvas({
           if (trap.type === "pop-spikes" && state.active && state.time >= (trap.delay ?? 0.2) && intersects(player, trap.hazard)) kill(player);
           if (trap.type === "crusher") {
             const rect = { ...trap.rect, y: state.y ?? trap.rect.y };
-            if (intersects(player, rect)) kill(player);
-          }
-          if (trap.type === "side-slam") {
-            const rect = { ...trap.rect, x: state.x ?? trap.rect.x };
-            if (intersects(player, rect)) kill(player);
+            const teeth = { x: rect.x, y: rect.y + rect.h, w: rect.w, h: 16 };
+            if (intersects(player, teeth)) kill(player);
           }
         });
         if (player.y > height + 40) kill(player);
@@ -551,6 +910,24 @@ function GameCanvas({
           player.vy = 0;
           setExitState((previous) => ({ ...previous, [player.kind]: true }));
           playSfx("switch");
+          if (level.duality && player.kind === "yin") {
+            dualityPhase = "yang";
+            powerHintTimer = 5;
+            trapStates = (level.traps ?? []).map((trap) => ({
+              active: false,
+              time: 0,
+              x: trap.type === "side-slam" ? trap.rect.x : undefined,
+              y: trap.type === "crusher" ? trap.rect.y : undefined,
+              velocity: 0,
+              dx: 0,
+              dy: 0,
+            }));
+            platformFalls = new Map();
+            for (const platform of level.platforms) {
+              if (platform.id) platformFalls.set(platform.id, { active: false, time: 0, y: 0, velocity: 0 });
+            }
+            projectiles = [];
+          }
         }
       }
       justPressed.current.clear();
@@ -602,7 +979,17 @@ export function GrayworldGame() {
     try {
       const savedSettings = localStorage.getItem("grayworld:settings");
       const savedProgress = localStorage.getItem("grayworld:progress");
-      if (savedSettings) setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(savedSettings) });
+      if (savedSettings) {
+        const parsed = JSON.parse(savedSettings) as Partial<GameSettings>;
+        setSettings({
+          ...DEFAULT_SETTINGS,
+          ...parsed,
+          bindings: {
+            yin: { ...DEFAULT_BINDINGS.yin, ...parsed.bindings?.yin },
+            yang: { ...DEFAULT_BINDINGS.yang, ...parsed.bindings?.yang },
+          },
+        });
+      }
       if (savedProgress) setCompleted(JSON.parse(savedProgress));
     } catch { /* damaged saves fall back safely */ }
     setHydrated(true);
@@ -763,8 +1150,8 @@ export function GrayworldGame() {
           <button className="pixel-button" onClick={() => openSettings("title")}><PixelIcon kind="gear" /> AJUSTES</button>
         </div>
         <div className="quick-controls">
-          <span><i className="mini-player yang" /> YANG <kbd>FLECHAS</kbd></span>
-          <span><i className="mini-player yin" /> YIN <kbd>WASD</kbd></span>
+          <span><i className="mini-player yang" /> YANG <kbd>FLECHAS + L</kbd></span>
+          <span><i className="mini-player yin" /> YIN <kbd>WASD + ESPACIO</kbd></span>
         </div>
       </section>
       <p className="version">v0.1 · PRIMER DESCENSO</p>
@@ -863,7 +1250,7 @@ export function GrayworldGame() {
                   </div>
                 ))}
               </div>
-              <p className="control-note">ESC cancela la reasignación · ABAJO acelera la caída</p>
+              <p className="control-note">ESC cancela · ABAJO acelera la caída · PODER también libera mascotas</p>
             </div>
           )}
         </div>
@@ -893,7 +1280,10 @@ export function GrayworldGame() {
         />
         <div className="game-bottom">
           <p><strong>PISTA:</strong> {activeLevel.hint}</p>
-          <div><span>YIN {keyLabel(settings.bindings.yin.left)} {keyLabel(settings.bindings.yin.right)} {keyLabel(settings.bindings.yin.jump)}</span><span>YANG {keyLabel(settings.bindings.yang.left)} {keyLabel(settings.bindings.yang.right)} {keyLabel(settings.bindings.yang.jump)}</span></div>
+          <div>
+            <span>YIN {keyLabel(settings.bindings.yin.left)} {keyLabel(settings.bindings.yin.right)} {keyLabel(settings.bindings.yin.jump)} · {keyLabel(settings.bindings.yin.power)}</span>
+            <span>YANG {keyLabel(settings.bindings.yang.left)} {keyLabel(settings.bindings.yang.right)} {keyLabel(settings.bindings.yang.jump)} · {keyLabel(settings.bindings.yang.power)}</span>
+          </div>
         </div>
         {paused && (
           <div className="pause-layer">
