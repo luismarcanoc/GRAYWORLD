@@ -141,7 +141,7 @@ export const LEVELS: Level[] = [
     spawn: { yin: { x: 60, y: 440 }, yang: { x: 108, y: 440 } },
     platforms: [floor(0, 960), ledge(285, 390, 100), ledge(480, 340, 100), ledge(675, 390, 100)],
     hazards: [spikes(390, 456, 62), spikes(590, 456, 62)],
-    traps: [{ type: "crusher", trigger: { x: 210, y: 390, w: 88, h: 90 }, rect: { x: 228, y: 32, w: 66, h: 112 }, targetY: 356, speed: 540 }],
+    traps: [{ type: "crusher", trigger: { x: 210, y: 390, w: 88, h: 90 }, rect: { x: 228, y: 32, w: 66, h: 112 }, targetY: 300, speed: 540 }],
     exits: [door(835, "yin"), door(885, "yang")],
   },
   {
