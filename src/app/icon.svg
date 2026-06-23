@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" shape-rendering="crispEdges">
+  <title>GRAYWORLD</title>
+
+  <!-- fondo dividido -->
+  <path fill="#08090a" d="M4 4h28v56H4z"/>
+  <path fill="#efefeb" d="M32 4h28v56H32z"/>
+
+  <!-- sombra pixelada -->
+  <path fill="#565b5e" d="M16 8h36v4h4v36h-4v4H16v-4h-4V12h4z"/>
+
+  <!-- cabeza: Yang sobre negro, Yin sobre blanco -->
+  <path fill="#efefeb" d="M16 12h16v36H16v-4h-4V16h4z"/>
+  <path fill="#08090a" d="M32 12h16v4h4v28h-4v4H32z"/>
+
+  <!-- ojos invertidos -->
+  <path fill="#08090a" d="M22 25h6v8h-6z"/>
+  <path fill="#efefeb" d="M36 25h6v8h-6z"/>
+
+  <!-- marca central yin/yang -->
+  <path fill="#08090a" d="M26 38h6v6h-6z"/>
+  <path fill="#efefeb" d="M32 38h6v6h-6z"/>
+
+  <!-- esquinas del marco -->
+  <path fill="#9ba0a3" d="M4 4h8v4H8v4H4zm48 0h8v8h-4V8h-4zM4 52h4v4h4v4H4zm52 0h4v8h-8v-4h4z"/>
+</svg>
